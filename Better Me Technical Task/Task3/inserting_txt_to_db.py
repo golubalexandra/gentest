@@ -1,4 +1,5 @@
 import argparse
+import json
 
 import pandas as pd
 
@@ -7,15 +8,11 @@ from pyoxr import OXRClient
 import requests
 from pyoxr import OXRInvalidBaseError
 
-from sqlalchemy import create_engine, exc
+from sqlalchemy import create_engine, exc, types
 
-db_config = {
-    'user': 'admin',
-    'password': '123456789',
-    'host': '100.00.000.000',
-    'port': '12345',
-    'database': 'database'
-}
+pyoxr.init('a76126fb95ed4f78ae8c4eca2a92e867')
+
+
 
 events_file_columns = [
     'Event Date', 'App Apple ID',
@@ -65,7 +62,7 @@ country_to_currency_table_columns = ['country_code', 'currency_code']
 exchange_rates_table_columns = [
     'exchange_date', 
     'currency_code', 
-    'usd_to_currency_code'
+    'usd_to_currency'
 ]
 
 
@@ -78,7 +75,7 @@ def get_exchange_rates(date, currencies_to_sync):
         raise Exception("exchange rate")
     return pd.DataFrame([{'exchange_date': date,
                           'currency_code': k,
-                          'usd_to_currency_code': float(v)}
+                          'usd_to_currency': float(v)}
                          for k, v in exchange_rates_by_date["rates"].items()])
 
 
@@ -87,13 +84,32 @@ def insert_df_to_mysql_table(df, table, db_engine):
 
     for i in range(num_rows):
         try:
-            df.iloc[i:i + 1].to_sql(
+            if table=='exchange_rates':
+                df.iloc[i:i + 1].to_sql(
+                name=table, 
+                con=db_engine, 
+                if_exists='append', 
+                index=False,
+                dtype = {'usd_to_currency' : types.DECIMAL(precision=8, asdecimal=True)}
+                )
+            elif table=='events':
+                df.iloc[i:i + 1].to_sql(
+                name=table, 
+                con=db_engine, 
+                if_exists='append', 
+                index=False,
+                dtype = {'customer_price' : types.DECIMAL(precision=2, asdecimal=True), 
+                         'developer_proceeds' : types.DECIMAL(precision=2, asdecimal=True)}
+                )
+
+            else:
+                df.iloc[i:i + 1].to_sql(
                 name=table, 
                 con=db_engine, 
                 if_exists='append', 
                 index=False
-            )
-        except exc.IntegrityError:
+                )
+        except exc.IntegrityError as e:
             # Ignore duplicates_of_rows
             pass
 
@@ -108,6 +124,9 @@ if __name__ == '__main__':
         df = pd.read_csv(args.report_dir, sep='	')
     except Exception as e:
         print("Error reading csv: {}".format(e))
+
+    with open('db_config.json') as file:
+        db_config=json.load(file)
 
     events_df = df.loc[:, events_file_columns].copy(deep=True)
     apps_df = df.loc[:, apps_file_columns].drop_duplicates(keep='first', inplace=False)
@@ -137,10 +156,9 @@ if __name__ == '__main__':
                 'Event Date'] == date, 'Customer Currency'
             ].unique()
         )
-        currencies_by_date_df = get_exchange_rates(date, currency_by_day_df)
+        currencies_by_date_df = get_exchange_rates(date, currencies_to_sync)
         exchange_rates_df = exchange_rates_df.append(
             currencies_by_date_df, 
-            sort=False, 
             ignore_index=True
         )
 
@@ -160,21 +178,26 @@ if __name__ == '__main__':
         columns=dict(zip(country_to_currency_file_columns, country_to_currency_table_columns)), 
         inplace=True
     )
-    db_engine = sqlalchemy.create_engine(
+
+    db_engine = create_engine(
         'mysql://{user}:{password}@{host}:{port}/{database}'.format(**db_config),
         echo=False
     )
 
     in_which_table_df_dict = {
-        'events': events_df,
         'apps': apps_df,
-        'subsctiptions': subscriptions_df,
+        'subscriptions': subscriptions_df,
         'country_to_currency': country_to_currency_df,
-        'exchange_rates': exchange_rates_df
+        'exchange_rates': exchange_rates_df,
+        'events': events_df
     }
 
+
+    exchange_rates_df['usd_to_currency']=exchange_rates_df['usd_to_currency'].astype(float)
+
     try:
-        for table, df in table_df_dict.items():
+        for table, df in in_which_table_df_dict.items():
+            print(table)
             insert_df_to_mysql_table(df, table, db_engine)
     except Exception as e:
         print("Error inserting data into database: {}".format(e))
