@@ -27,7 +27,7 @@ if __name__ == '__main__':
 						currency_code VARCHAR(3) NOT NULL,
 						usd_to_currency DECIMAL(16, 8) NOT NULL,
 						PRIMARY KEY (exchange_date, currency_code,
-															usd_to_currency)
+						            usd_to_currency)
 
 						)
 				''')
@@ -79,7 +79,7 @@ if __name__ == '__main__':
 	                				customer_price, developer_proceeds,
 	                				device, country_code,
 	                				is_refund
-	                							)
+							)
 	                    )   
 				''')
 
